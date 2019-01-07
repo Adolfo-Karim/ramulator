@@ -1,5 +1,6 @@
 #include "Processor.h"
 #include <cassert>
+#include <sstream>
 
 using namespace std;
 using namespace ramulator;
@@ -177,7 +178,7 @@ Core::Core(const Config& configs, int coreid,
     req_addr = memory.page_allocator(req_addr, id);
   }
 
-  
+
   // regStats
   record_cycs.name("record_cycs_core_" + to_string(id))
              .desc("Record cycle number for calculating weighted speedup. (Only valid when expected limit instruction number is non zero in config file.)")
@@ -455,19 +456,24 @@ bool Trace::get_filtered_request(long& bubble_cnt, long& req_addr, Request::Type
 bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type)
 {
     string line;
-    getline(file, line);
-    if (file.eof()) {
+    if (!getline(file, line))
         return false;
-    }
-    size_t pos;
-    req_addr = std::stoul(line, &pos, 16);
+    // Tokenize the string
+    stringstream tokenizer(line);
+    vector<string> tokens;
+    string token;
+    while (getline(tokenizer, token, ' '))
+        tokens.push_back(token);
 
-    pos = line.find_first_not_of(' ', pos+1);
-
-    if (pos == string::npos || line.substr(pos)[0] == 'R')
+    bool valid_line = true;
+    // Requests should start with an address
+    req_addr = stoul(tokens[0], 0, 16);
+    if (tokens.size() == 1 || tokens[1] == "R")
         req_type = Request::Type::READ;
-    else if (line.substr(pos)[0] == 'W')
+    else if (tokens[1] == "W")
         req_type = Request::Type::WRITE;
-    else assert(false);
+    else
+        valid_line = false;
+    assert(valid_line);
     return true;
 }
