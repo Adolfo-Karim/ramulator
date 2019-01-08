@@ -453,7 +453,8 @@ bool Trace::get_filtered_request(long& bubble_cnt, long& req_addr, Request::Type
     return true;
 }
 
-bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type)
+bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type,
+                                  bool& in_memory)
 {
     string line;
     if (!getline(file, line))
@@ -465,6 +466,7 @@ bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type)
     while (getline(tokenizer, token, ' '))
         tokens.push_back(token);
 
+    assert(!tokens.empty() && tokens.size() <= 3);
     bool valid_line = true;
     // Requests should start with an address
     req_addr = stoul(tokens[0], 0, 16);
@@ -474,6 +476,8 @@ bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type)
         req_type = Request::Type::WRITE;
     else
         valid_line = false;
+    in_memory = tokens.size() == 3 && tokens[2] == "G";
+    valid_line = tokens.size() != 3 || in_memory;
     assert(valid_line);
     return true;
 }

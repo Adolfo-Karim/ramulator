@@ -44,6 +44,7 @@ void run_dramtrace(const Config& configs, Memory<T, Controller>& memory, const c
     bool stall = false, end = false;
     int reads = 0, writes = 0, clks = 0;
     long addr = 0;
+    bool in_mem = false;
     Request::Type type = Request::Type::READ;
     map<int, int> latencies;
     auto read_complete = [&latencies](Request& r){latencies[r.depart - r.arrive]++;};
@@ -52,12 +53,13 @@ void run_dramtrace(const Config& configs, Memory<T, Controller>& memory, const c
 
     while (!end || memory.pending_requests()){
         if (!end && !stall){
-            end = !trace.get_dramtrace_request(addr, type);
+            end = !trace.get_dramtrace_request(addr, type, in_mem);
         }
 
         if (!end){
             req.addr = addr;
             req.type = type;
+            req.in_mem = in_mem;
             stall = !memory.send(req);
             if (!stall){
                 if (type == Request::Type::READ) reads++;

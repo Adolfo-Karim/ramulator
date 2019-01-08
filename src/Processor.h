@@ -25,7 +25,7 @@ public:
     bool get_filtered_request(long& bubble_cnt, long& req_addr, Request::Type& req_type);
     // trace file format 2:
     // [address(hex)] [R/W]
-    bool get_dramtrace_request(long& req_addr, Request::Type& req_type);
+    bool get_dramtrace_request(long& req_addr, Request::Type& req_type, bool& in_memory);
 
     long expected_limit_insts = 0;
 
