@@ -83,12 +83,14 @@ public:
 
     Queue readq;  // queue for read requests
     Queue writeq;  // queue for write requests
-    Queue actq; // read and write requests for which activate was issued are moved to 
+    Queue actq; // read and write requests for which activate was issued are moved to
                    // actq, which has higher priority than readq and writeq.
                    // This is an optimization
                    // for avoiding useless activations (i.e., PRECHARGE
                    // after ACTIVATE w/o READ of WRITE command)
     Queue otherq;  // queue for all "other" requests (e.g., refresh)
+    Queue pim_readq;    // Queue for PIM read requests.
+    Queue pim_writeq;   // Queue for PIM write requests.
 
     deque<Request> pending;  // read requests that are about to receive data from DRAM
     bool write_mode = false;  // whether write requests should be prioritized over reads
@@ -301,18 +303,20 @@ public:
     }
 
     /* Member Functions */
-    Queue& get_queue(Request::Type type)
+    Queue& get_queue(Request& req)
     {
-        switch (int(type)) {
-            case int(Request::Type::READ): return readq;
-            case int(Request::Type::WRITE): return writeq;
+        switch (int(req.type)) {
+            case int(Request::Type::READ):
+                return req.in_mem ? pim_readq : readq;
+            case int(Request::Type::WRITE):
+                return req.in_mem ? pim_writeq : writeq;
             default: return otherq;
         }
     }
 
     bool enqueue(Request& req)
     {
-        Queue& queue = get_queue(req.type);
+        Queue& queue = get_queue(req);
         if (queue.max == queue.size())
             return false;
 
@@ -320,6 +324,17 @@ public:
         queue.q.push_back(req);
         // shortcut for read requests, if a write to same addr exists
         // necessary for coherence
+        if (req.in_mem) {
+            if (req.type == Request::Type::READ &&
+                    find_if(pim_writeq.q.begin(), pim_writeq.q.end(),
+                    [req](Request& wreq){
+                        return req.addr == wreq.addr;
+                    }) != pim_writeq.q.end()) {
+                req.depart = clk + 1;
+                pending.push_back(req);
+                readq.q.pop_back();
+            }
+        }
         if (req.type == Request::Type::READ && find_if(writeq.q.begin(), writeq.q.end(),
                 [req](Request& wreq){ return req.addr == wreq.addr;}) != writeq.q.end()){
             req.depart = clk + 1;
@@ -329,71 +344,7 @@ public:
         return true;
     }
 
-    void tick()
-    {
-        clk++;
-        req_queue_length_sum += readq.size() + writeq.size() + pending.size();
-        read_req_queue_length_sum += readq.size() + pending.size();
-        write_req_queue_length_sum += writeq.size();
-
-        /*** 1. Serve completed reads ***/
-        if (pending.size()) {
-            Request& req = pending[0];
-            if (req.depart <= clk) {
-                if (req.depart - req.arrive > 1) { // this request really accessed a row
-                  read_latency_sum += req.depart - req.arrive;
-                  channel->update_serving_requests(
-                      req.addr_vec.data(), -1, clk);
-                }
-                req.callback(req);
-                pending.pop_front();
-            }
-        }
-
-        /*** 2. Refresh scheduler ***/
-        refresh->tick_ref();
-
-        /*** 3. Should we schedule writes? ***/
-        if (!write_mode) {
-            // yes -- write queue is almost full or read queue is empty
-            if (writeq.size() > int(wr_high_watermark * writeq.max) 
-                    /*|| readq.size() == 0*/) // Hasan: Switching to write mode when there are just a few 
-                                              // write requests, even if the read queue is empty, incurs a lot of overhead. 
-                                              // Commented out the read request queue empty condition
-                write_mode = true;
-        }
-        else {
-            // no -- write queue is almost empty and read queue is not empty
-            if (writeq.size() < int(wr_low_watermark * writeq.max) && readq.size() != 0)
-                write_mode = false;
-        }
-
-        /*** 4. Find the best command to schedule, if any ***/
-
-        // First check the actq (which has higher priority) to see if there
-        // are requests available to service in this cycle
-        Queue* queue = &actq;
-
-        auto req = scheduler->get_head(queue->q);
-        if (req == queue->q.end() || !is_ready(req)) {
-            queue = !write_mode ? &readq : &writeq;
-
-            if (otherq.size())
-                queue = &otherq;  // "other" requests are rare, so we give them precedence over reads/writes
-
-            req = scheduler->get_head(queue->q);
-        }
-
-        if (req == queue->q.end() || !is_ready(req)) {
-            // we couldn't find a command to schedule -- let's try to be speculative
-            auto cmd = T::Command::PRE;
-            vector<int> victim = rowpolicy->get_victim(cmd);
-            if (!victim.empty()){
-                issue_cmd(cmd, victim);
-            }
-            return;  // nothing more to be done this cycle
-        }
-
+    void schedule_request(Queue* queue, list<Request>::iterator req) {
         if (req->is_first_command) {
             req->is_first_command = false;
             int coreid = req->coreid;
@@ -458,6 +409,88 @@ public:
         queue->q.erase(req);
     }
 
+    void schedule_pim() {
+        Queue* queue = write_mode ? &pim_writeq : &pim_readq;
+        auto req = scheduler->get_head(queue->q);
+        for (int i = 0; i < 8; i++) {
+            if (req == queue->q.end() || !is_ready(req))
+                return;
+            schedule_request(queue, req);
+        }
+    }
+
+    void tick()
+    {
+        clk++;
+        req_queue_length_sum +=
+            pim_readq.size() + pim_writeq.size() + readq.size() + writeq.size() + pending.size();
+        read_req_queue_length_sum += pim_readq.size() + readq.size() + pending.size();
+        write_req_queue_length_sum += writeq.size() + pim_writeq.size();
+
+        /*** 1. Serve completed reads ***/
+        if (pending.size()) {
+            Request& req = pending[0];
+            if (req.depart <= clk) {
+                if (req.depart - req.arrive > 1) { // this request really accessed a row
+                  read_latency_sum += req.depart - req.arrive;
+                  channel->update_serving_requests(
+                      req.addr_vec.data(), -1, clk);
+                }
+                req.callback(req);
+                pending.pop_front();
+            }
+        }
+
+        /*** 2. Refresh scheduler ***/
+        refresh->tick_ref();
+
+        /*** 3. Should we schedule writes? ***/
+        if (!write_mode) {
+            // yes -- write queue is almost full or read queue is empty
+            if (writeq.size() + pim_writeq.size() >
+                    int(wr_high_watermark * writeq.max)
+                    /*|| readq.size() == 0*/) // Hasan: Switching to write mode when there are just a few 
+                                              // write requests, even if the read queue is empty, incurs a lot of overhead. 
+                                              // Commented out the read request queue empty condition
+                write_mode = true;
+        }
+        else {
+            // no -- write queue is almost empty and read queue is not empty
+            if (writeq.size() + pim_writeq.size() <
+                    int(wr_low_watermark * writeq.max) && readq.size() != 0)
+                write_mode = false;
+        }
+
+        /*** 4. Find the best command to schedule, if any ***/
+
+        // First check the actq (which has higher priority) to see if there
+        // are requests available to service in this cycle
+        Queue* queue = &actq;
+
+        auto req = scheduler->get_head(queue->q);
+        if (req == queue->q.end() || !is_ready(req)) {
+            queue = !write_mode ? &readq : &writeq;
+
+            if (otherq.size())
+                queue = &otherq;  // "other" requests are rare, so we give them precedence over reads/writes
+
+            req = scheduler->get_head(queue->q);
+        }
+
+        if (req == queue->q.end() || !is_ready(req)) {
+            // we couldn't find a command to schedule -- let's try to be speculative
+            auto cmd = T::Command::PRE;
+            vector<int> victim = rowpolicy->get_victim(cmd);
+            if (!victim.empty()){
+                issue_cmd(cmd, victim);
+            }
+            return;  // nothing more to be done this cycle
+        }
+
+        schedule_request(queue, req);
+        schedule_pim();
+    }
+
     bool is_ready(list<Request>::iterator req)
     {
         typename T::Command cmd = get_first_cmd(req);
@@ -508,7 +541,7 @@ public:
     }
 
     void set_high_writeq_watermark(const float watermark) {
-       wr_high_watermark = watermark; 
+       wr_high_watermark = watermark;
     }
 
     void set_low_writeq_watermark(const float watermark) {
@@ -548,7 +581,7 @@ private:
 			int num_row_hits = 0;
 
             for (auto itr = queue->q.begin(); itr != queue->q.end(); ++itr) {
-                if (is_row_hit(itr)) { 
+                if (is_row_hit(itr)) {
                     auto begin2 = itr->addr_vec.begin();
                     vector<int> rowgroup2(begin2, begin2 + int(T::Level::Row) + 1);
                     if(rowgroup == rowgroup2)
@@ -594,7 +627,7 @@ private:
                 useless_activates++;
             }
         }
- 
+
         rowtable->update(cmd, addr_vec, clk);
         if (record_cmd_trace){
             // select rank

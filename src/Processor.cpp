@@ -454,7 +454,7 @@ bool Trace::get_filtered_request(long& bubble_cnt, long& req_addr, Request::Type
 }
 
 bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type,
-                                  bool& in_memory)
+                                  bool& in_mem)
 {
     string line;
     if (!getline(file, line))
@@ -476,8 +476,8 @@ bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type,
         req_type = Request::Type::WRITE;
     else
         valid_line = false;
-    in_memory = tokens.size() == 3 && tokens[2] == "G";
-    valid_line = tokens.size() != 3 || in_memory;
+    in_mem = tokens.size() == 3 && tokens[2] == "G";
+    valid_line = tokens.size() != 3 || in_mem;
     assert(valid_line);
     return true;
 }
