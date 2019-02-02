@@ -411,8 +411,8 @@ public:
 
     void schedule_pim() {
         Queue* queue = write_mode ? &pim_writeq : &pim_readq;
-        auto req = scheduler->get_head(queue->q);
         for (int i = 0; i < 8; i++) {
+            auto req = scheduler->get_head(queue->q);
             if (req == queue->q.end() || !is_ready(req))
                 return;
             schedule_request(queue, req);
