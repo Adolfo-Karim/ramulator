@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <functional>
 #include <map>
+#include <queue>
 
 /* Standards */
 #include "Gem5Wrapper.h"
@@ -45,6 +46,7 @@ void run_dramtrace(const Config& configs, Memory<T, Controller>& memory, const c
     int reads = 0, writes = 0, clks = 0;
     long addr = 0;
     bool in_mem = false;
+    int in_mem_count = 0; // Number of in memory requests updated per iteration.
     Request::Type type = Request::Type::READ;
     map<int, int> latencies;
     auto read_complete = [&latencies](Request& r){latencies[r.depart - r.arrive]++;};
@@ -52,25 +54,31 @@ void run_dramtrace(const Config& configs, Memory<T, Controller>& memory, const c
     Request req(addr, type, read_complete);
 
     while (!end || memory.pending_requests()){
-        if (!end && !stall){
-            end = !trace.get_dramtrace_request(addr, type, in_mem);
-        }
+        // If there are consecutive in mem requests, enqueue up to 8.
+        do {
+          if (!end && !stall){
+              end = !trace.get_dramtrace_request(addr, type, in_mem);
+          }
 
-        if (!end){
-            req.addr = addr;
-            req.type = type;
-            req.in_mem = in_mem;
-            stall = !memory.send(req);
-            if (!stall){
-                if (type == Request::Type::READ) reads++;
-                else if (type == Request::Type::WRITE) writes++;
-            }
-        }
-        else {
-            memory.set_high_writeq_watermark(0.0f); // make sure that all write requests in the
-                                                    // write queue are drained
-        }
+          if (!end){
+              req.addr = addr;
+              req.type = type;
+              req.in_mem = in_mem;
+              stall = !memory.send(req);
+              if (!stall){
+                  if (type == Request::Type::READ) reads++;
+                  else if (type == Request::Type::WRITE) writes++;
+              }
+          }
+          else {
+              memory.set_high_writeq_watermark(0.0f); // make sure that all write requests in the
+                                                      // write queue are drained
+          }
+          in_mem_count += in_mem;
+          // If it's a GC request, then try to enqueue more of them.
+        } while(in_mem && !end && in_mem_count < 8);
 
+        in_mem_count = 0;
         memory.tick();
         clks ++;
         Stats::curTick++; // memory clock, global, for Statistics

@@ -266,12 +266,17 @@ typename T::Command DRAM<T>::decode(typename T::Command cmd, const int* addr)
 template <typename T>
 bool DRAM<T>::check(typename T::Command cmd, const int* addr, long clk)
 {
-    if (next[int(cmd)] != -1 && clk < next[int(cmd)])
+    if (next[int(cmd)] != -1 && clk < next[int(cmd)]) {
+        // cout << "Stopping recursion, next check failed." << endl;
+        // cout << "Next val: " << next[int(cmd)] << " Clock: " <<  clk << endl;
         return false; // stop recursion: the check failed at this level
+    }
 
     int child_id = addr[int(level)+1];
-    if (child_id < 0 || level == spec->scope[int(cmd)] || !children.size())
+    if (child_id < 0 || level == spec->scope[int(cmd)] || !children.size()) {
+        // cout << "Check successful." << endl;
         return true; // stop recursion: the check passed at all levels
+    }
 
     // recursively check my child
     return children[child_id]->check(cmd, addr, clk);

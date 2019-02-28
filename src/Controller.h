@@ -332,8 +332,9 @@ public:
                     }) != pim_writeq.q.end()) {
                 req.depart = clk + 1;
                 pending.push_back(req);
-                readq.q.pop_back();
+                pim_readq.q.pop_back();
             }
+            return true;
         }
         if (req.type == Request::Type::READ && find_if(writeq.q.begin(), writeq.q.end(),
                 [req](Request& wreq){ return req.addr == wreq.addr;}) != writeq.q.end()){
@@ -404,15 +405,15 @@ public:
         if (req->type == Request::Type::WRITE) {
             channel->update_serving_requests(req->addr_vec.data(), -1, clk);
         }
-
         // remove request from queue
         queue->q.erase(req);
     }
 
     void schedule_pim() {
-        Queue* queue = write_mode ? &pim_writeq : &pim_readq;
         for (int i = 0; i < 8; i++) {
+            Queue* queue = write_mode ? &pim_writeq : &pim_readq;
             auto req = scheduler->get_head(queue->q);
+            // cout << "Attempting to schedule " << (write_mode ? "write " : "read ") << i << endl;
             if (req == queue->q.end() || !is_ready(req))
                 return;
             schedule_request(queue, req);
@@ -447,8 +448,7 @@ public:
         /*** 3. Should we schedule writes? ***/
         if (!write_mode) {
             // yes -- write queue is almost full or read queue is empty
-            if (writeq.size() + pim_writeq.size() >
-                    int(wr_high_watermark * writeq.max)
+            if (writeq.size() + pim_writeq.size() > int(wr_high_watermark * (writeq.max + pim_writeq.max))
                     /*|| readq.size() == 0*/) // Hasan: Switching to write mode when there are just a few 
                                               // write requests, even if the read queue is empty, incurs a lot of overhead. 
                                               // Commented out the read request queue empty condition
@@ -456,8 +456,8 @@ public:
         }
         else {
             // no -- write queue is almost empty and read queue is not empty
-            if (writeq.size() + pim_writeq.size() <
-                    int(wr_low_watermark * writeq.max) && readq.size() != 0)
+            if (writeq.size() + pim_writeq.size() < int(wr_low_watermark * (writeq.max + pim_writeq.max)) &&
+                    (readq.size() + pim_readq.size()) != 0)
                 write_mode = false;
         }
 
@@ -477,6 +477,18 @@ public:
             req = scheduler->get_head(queue->q);
         }
 
+
+        // if (write_mode)
+        //     cout << "Writing!" << endl;
+        // cout << "pim_readq: " << pim_readq.size() << " ";
+        // cout << "pim_writeq: " << pim_writeq.size() << " ";
+        // cout << "readq: " << readq.size() << " ";
+        // cout << "writeq: " << writeq.size() << " ";
+        // cout << "otherq: " << otherq.size() << " ";
+        // cout << "actq: " << actq.size() << " ";
+        // cout << "pending: " << pending.size() << endl;
+
+
         if (req == queue->q.end() || !is_ready(req)) {
             // we couldn't find a command to schedule -- let's try to be speculative
             auto cmd = T::Command::PRE;
@@ -484,11 +496,13 @@ public:
             if (!victim.empty()){
                 issue_cmd(cmd, victim);
             }
-            return;  // nothing more to be done this cycle
+        } else {
+            schedule_request(queue, req);
         }
 
-        schedule_request(queue, req);
         schedule_pim();
+
+
     }
 
     bool is_ready(list<Request>::iterator req)

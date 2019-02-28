@@ -285,9 +285,11 @@ public:
         int cur_que_readreq_num = 0;
         int cur_que_writereq_num = 0;
         for (auto ctrl : ctrls) {
-          cur_que_req_num += ctrl->readq.size() + ctrl->writeq.size() + ctrl->pending.size();
-          cur_que_readreq_num += ctrl->readq.size() + ctrl->pending.size();
-          cur_que_writereq_num += ctrl->writeq.size();
+          cur_que_req_num += ctrl->pim_readq.size() + ctrl->pim_writeq.size() +
+                                ctrl->readq.size() + ctrl->writeq.size() +
+                                ctrl->pending.size();
+          cur_que_readreq_num += ctrl->readq.size() + ctrl->pim_readq.size() + ctrl->pending.size();
+          cur_que_writereq_num += ctrl->writeq.size() + ctrl->pim_writeq.size();
         }
         in_queue_req_num_sum += cur_que_req_num;
         in_queue_read_req_num_sum += cur_que_readreq_num;
@@ -348,7 +350,7 @@ public:
 
         return false;
     }
-    
+
     void init_mapping_with_file(string filename){
         ifstream file(filename);
         assert(file.good() && "Bad mapping file");
@@ -435,7 +437,7 @@ public:
         if (dump_mapping)
             dump_mapping_scheme();
     }
-    
+
     void dump_mapping_scheme(){
         cout << "Mapping Scheme: " << endl;
         for (MapScheme::iterator mapit = mapping_scheme.begin(); mapit != mapping_scheme.end(); mapit++)
@@ -451,7 +453,7 @@ public:
             }
         }
     }
-    
+
     void apply_mapping(long addr, std::vector<int>& addr_vec){
         int *sz = spec->org_entry.count;
         int addr_total_bits = sizeof(addr_vec)*8;
@@ -490,7 +492,7 @@ public:
     {
         int reqs = 0;
         for (auto ctrl: ctrls)
-            reqs += ctrl->readq.size() + ctrl->writeq.size() + ctrl->otherq.size() + ctrl->actq.size() + ctrl->pending.size();
+            reqs += ctrl->pim_readq.size() + ctrl->pim_writeq.size() + ctrl->readq.size() + ctrl->writeq.size() + ctrl->otherq.size() + ctrl->actq.size() + ctrl->pending.size();
         return reqs;
     }
 
