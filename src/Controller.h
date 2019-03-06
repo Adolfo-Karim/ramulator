@@ -325,15 +325,21 @@ public:
         // shortcut for read requests, if a write to same addr exists
         // necessary for coherence
         if (req.in_mem) {
-            if (req.type == Request::Type::READ &&
-                    find_if(pim_writeq.q.begin(), pim_writeq.q.end(),
-                    [req](Request& wreq){
-                        return req.addr == wreq.addr;
-                    }) != pim_writeq.q.end()) {
-                req.depart = clk + 1;
-                pending.push_back(req);
+            req.depart = clk + 1;
+            pending.push_back(req);
+            if (req.type == Request::Type::READ)
                 pim_readq.q.pop_back();
-            }
+            else
+                pim_writeq.q.pop_back();
+            // if (req.type == Request::Type::READ &&
+            //         find_if(pim_writeq.q.begin(), pim_writeq.q.end(),
+            //         [req](Request& wreq){
+            //             return req.addr == wreq.addr;
+            //         }) != pim_writeq.q.end()) {
+            //     req.depart = clk + 1;
+            //     pending.push_back(req);
+            //     pim_readq.q.pop_back();
+            // }
             return true;
         }
         if (req.type == Request::Type::READ && find_if(writeq.q.begin(), writeq.q.end(),
@@ -448,7 +454,7 @@ public:
         /*** 3. Should we schedule writes? ***/
         if (!write_mode) {
             // yes -- write queue is almost full or read queue is empty
-            if (writeq.size() + pim_writeq.size() > int(wr_high_watermark * (writeq.max + pim_writeq.max))
+            if (writeq.size() + pim_writeq.size() > int(wr_high_watermark * (writeq.max))
                     /*|| readq.size() == 0*/) // Hasan: Switching to write mode when there are just a few 
                                               // write requests, even if the read queue is empty, incurs a lot of overhead. 
                                               // Commented out the read request queue empty condition
@@ -456,7 +462,7 @@ public:
         }
         else {
             // no -- write queue is almost empty and read queue is not empty
-            if (writeq.size() + pim_writeq.size() < int(wr_low_watermark * (writeq.max + pim_writeq.max)) &&
+            if (writeq.size() + pim_writeq.size() < int(wr_low_watermark * (writeq.max)) &&
                     (readq.size() + pim_readq.size()) != 0)
                 write_mode = false;
         }
@@ -487,22 +493,18 @@ public:
         // cout << "otherq: " << otherq.size() << " ";
         // cout << "actq: " << actq.size() << " ";
         // cout << "pending: " << pending.size() << endl;
-
-
         if (req == queue->q.end() || !is_ready(req)) {
-            // we couldn't find a command to schedule -- let's try to be speculative
-            auto cmd = T::Command::PRE;
-            vector<int> victim = rowpolicy->get_victim(cmd);
-            if (!victim.empty()){
-                issue_cmd(cmd, victim);
-            }
-        } else {
-            schedule_request(queue, req);
+                // we couldn't find a command to schedule -- let's try to be speculative
+                auto cmd = T::Command::PRE;
+                vector<int> victim = rowpolicy->get_victim(cmd);
+                if (!victim.empty()){
+                    issue_cmd(cmd, victim);
+                }
         }
+        else
+            schedule_request(queue, req);
 
-        schedule_pim();
-
-
+        // schedule_pim();
     }
 
     bool is_ready(list<Request>::iterator req)

@@ -63,7 +63,7 @@ void run_dramtrace(const Config& configs, Memory<T, Controller>& memory, const c
           if (!end){
               req.addr = addr;
               req.type = type;
-              req.in_mem = in_mem;
+              req.in_mem = false;
               stall = !memory.send(req);
               if (!stall){
                   if (type == Request::Type::READ) reads++;
